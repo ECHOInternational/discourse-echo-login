@@ -80,7 +80,14 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
     apex_user = nil
 
     if apex_session
-
+      unmarshaled_session_data =  Marshal.load(apex_session)
+      # {"_csrf_token"=>"5/97dOURMDEAKh/Vwzh3JOhNxeb+Ngs+YUqfnz6c9jM=", "warden.user.user.key"=>[[1], "$2a$10$CXUCcfy8rwkJMe7Ro7h61u"], "warden.user.user.email"=>"nflood@echonet.org", "warden.user.user.first_name"=>"Nate", "warden.user.user.last_name"=>"Flood", "warden.user.user.role"=>"ECHOstaff", "warden.user.user.session"=>{"last_request_at"=>1490644118}}
+      apex_user = {}
+      apex_user["email_address"] = unmarshaled_session_data["warden.user.user.email"]
+      apex_user["first_name"] = unmarshaled_session_data["warden.user.user.first_name"]
+      apex_user["last_name"] = unmarshaled_session_data["warden.user.user.last_name"]
+      apex_user["role"] = unmarshaled_session_data["warden.user.user.role"]
+      apex_user["uid"] = unmarshaled_session_data["warden.user.user.uid"]
     end
 
     if apex_user
@@ -231,7 +238,5 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
   end
 
 end
-
-
 
 # Discourse.current_user_provider = ECHOcommunityCurrentUserProvider
