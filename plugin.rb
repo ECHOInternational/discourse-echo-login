@@ -1,53 +1,58 @@
 # name: ECHO Login
 # about: Current User Modifications to use ECHOcommunity Cookies to log in users.
-# version: 0.0.1
+# version: 1.8.0
 # authors: Nate Flood for ECHO Inc
+
+require_dependency 'single_sign_on'
+require_dependency "auth/current_user_provider"
+require_dependency "rate_limiter"
+require_dependency "app/models/user_auth_token"
+require_dependency "app/models/discourse_single_sign_on"
 
 # This section monkey patches the Single Sign on Provider to provide the current url instead
 # of doing all of the sso functions we don't really need since we're using cookies to set
-# the session and current user.
+# the current user.
 after_initialize do 
-  DiscourseSingleSignOn.class_eval do
-    def self.generate_url(return_path="/")
-      "#{SiteSetting.sso_url}/#{CGI.escape(Discourse.base_url + return_path)}"
+  SingleSignOn.class_eval do
+    def to_url(base_url=nil)
+      "#{SiteSetting.sso_url}/?return_path=#{(ERB::Util.url_encode(Discourse.base_url + return_path))}"
     end
   end
 end
-
-
 
 class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
 
   CURRENT_USER_KEY ||= "_DISCOURSE_CURRENT_USER".freeze
   API_KEY ||= "api_key".freeze
+  USER_API_KEY ||= "HTTP_USER_API_KEY".freeze
+  USER_API_CLIENT_ID ||= "HTTP_USER_API_CLIENT_ID".freeze
   API_KEY_ENV ||= "_DISCOURSE_API".freeze
+  USER_API_KEY_ENV ||= "_DISCOURSE_USER_API".freeze
 
   #modify to match the configuration for the rest of the site
-  #TODO: Make this a configuration setting
-  TOKEN_COOKIE ||= "_ECHOcommunity_session".freeze
-  SESSION_NAMESPACE ||= "session".freeze
+  TOKEN_COOKIE ||= ENV['TOKEN_COOKIE']
+  SESSION_NAMESPACE ||= ENV['SESSION_NAMESPACE']
 
   PATH_INFO ||= "PATH_INFO".freeze
+  COOKIE_ATTEMPTS_PER_MIN ||= 10
 
+  USER_DB_REDIS_HOST ||= ENV['USER_DB_REDIS_HOST']
+  USER_DB_REDIS_PORT ||= ENV['USER_DB_REDIS_PORT']
+
+
+  # Our Modification
+  @@user_db = Redis.new(:host => USER_DB_REDIS_HOST, :port =>USER_DB_REDIS_PORT)
 
   def initialize(env)
     @env = env
     @request = Rack::Request.new(env)
-    # TODO: Make these configuration variables
-    @user_db = Redis.new(:host => "localhost", :port => 6379)
   end
 
   # our current user, return nil if none is found
   def current_user
-    # If there is already a current user key in the @env variable
-    # skip the rest of this method and return that user key.
     return @env[CURRENT_USER_KEY] if @env.key?(CURRENT_USER_KEY)
 
-
     # bypass if we have the shared session header
-    # this header would be set by the site's CDN 
-    # removing this block might break the messaging bus
-    # when using a CDN
     if shared_key = @env['HTTP_X_SHARED_SESSION_KEY']
       uid = $redis.get("shared_session_key_#{shared_key}")
       user = nil
@@ -59,63 +64,54 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
     end
 
     request = @request
-    auth_token = request.cookies[TOKEN_COOKIE]
+
+    user_api_key = @env[USER_API_KEY]
+    api_key = request[API_KEY]
+
+    auth_token = request.cookies[TOKEN_COOKIE] unless user_api_key || api_key
 
     current_user = nil
-
-    # if there is a valid auth token, figure out who it belongs to (if anyone)
-    if auth_token && auth_token.length == 32
-      # does a user have this auth token assigned to them?
-      # if yes return them (if not you'll get nil)
-      current_user = User.find_by(auth_token: auth_token)
-    end
-
     apex_session = nil
 
     if auth_token && current_user.nil?
       # get user's details from the redis store
-      apex_session = @user_db.get "#{SESSION_NAMESPACE}:#{auth_token}"
+      apex_session = @@user_db.get "#{SESSION_NAMESPACE}:#{auth_token}"
     end
 
     apex_user = nil
 
     if apex_session
       unmarshaled_session_data =  Marshal.load(apex_session)
-      # {"_csrf_token"=>"5/97dOURMDEAKh/Vwzh3JOhNxeb+Ngs+YUqfnz6c9jM=", "warden.user.user.key"=>[[1], "$2a$10$CXUCcfy8rwkJMe7Ro7h61u"], "warden.user.user.email"=>"nflood@echonet.org", "warden.user.user.first_name"=>"Nate", "warden.user.user.last_name"=>"Flood", "warden.user.user.role"=>"ECHOstaff", "warden.user.user.session"=>{"last_request_at"=>1490644118}}
       apex_user = {}
       apex_user["email_address"] = unmarshaled_session_data["warden.user.user.email"]
       apex_user["first_name"] = unmarshaled_session_data["warden.user.user.first_name"]
       apex_user["last_name"] = unmarshaled_session_data["warden.user.user.last_name"]
+      apex_user["nickname"] = unmarshaled_session_data["warden.user.user.nickname"]
+      apex_user["nickname"] = "#{apex_user['first_name']} #{apex_user['last_name']}" if apex_user["nickname"].blank?
+      apex_user["avatar_url"] = unmarshaled_session_data["warden.user.user.headshot_url"]
       apex_user["role"] = unmarshaled_session_data["warden.user.user.role"]
       apex_user["uid"] = unmarshaled_session_data["warden.user.user.uid"]
     end
 
-    if apex_user
-    	# see if a user with that email address already has an account
-    	# if not create one for them
-    	
-    	# user = User.find_or_create_by(foreign_id: apex_user['foreign_id'])
+    if apex_user && apex_user["uid"]
+      sso = DiscourseSingleSignOn.new
+      sso.email = apex_user["email_address"]
+      sso.name = apex_user["nickname"]
+      sso.username = apex_user["nickname"]
+      sso.require_activation = false
+      sso.suppress_welcome_message = true
+      sso.external_id = apex_user["uid"]
+      sso.admin = apex_user["role"] == "ECHOstaff" ? true : false
+      sso.moderator = apex_user["role"] == "ECHOstaff" ? true : false
+      # unless apex_user["avatar_url"].blank?
+      #   sso.avatar_url = apex_user["avatar_url"]
+      #   sso.avatar_force_update = true
+      # end
 
-    	# update the details on that account
-    	# user.attribute = apex_user.attribute
-
-    	# By writing the auth token to the user we save ourselves
-    	# the round trip to the redis server
-    	user.auth_token = auth_token
-
-    	user.save!
-    	current_user = user
-    end
-
-    if current_user && (current_user.suspended? || !current_user.active)
-      # pretend there is no user even if one is found, if that user is inactive or 
-      # suspended.
-      current_user = nil
+      current_user = sso.lookup_or_create_user
     end
 
     if current_user && should_update_last_seen?
-      # touch the user to change last seen date (so long as the request
-      # isn't coming from the messaging bus)
       u = current_user
       Scheduler::Defer.later "Updating Last Seen" do
         u.update_last_seen!
@@ -124,44 +120,50 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
     end
 
     # possible we have an api call, impersonate
-    # if request[API_KEY] is not nil, assign its value to api_key and
-    if api_key = request[API_KEY]
-
+    if api_key
       current_user = lookup_api_user(api_key, request)
       raise Discourse::InvalidAccess unless current_user
+      raise Discourse::InvalidAccess if current_user.suspended? || !current_user.active
       @env[API_KEY_ENV] = true
     end
 
-    # Set the environment variable to contain the current user object
-    # and return that user object to the caller
+    # user api key handling
+    if user_api_key
+
+      limiter_min = RateLimiter.new(nil, "user_api_min_#{user_api_key}", SiteSetting.max_user_api_reqs_per_minute, 60)
+      limiter_day = RateLimiter.new(nil, "user_api_day_#{user_api_key}", SiteSetting.max_user_api_reqs_per_day, 86400)
+
+      unless limiter_day.can_perform?
+        limiter_day.performed!
+      end
+
+      unless  limiter_min.can_perform?
+        limiter_min.performed!
+      end
+
+      current_user = lookup_user_api_user_and_update_key(user_api_key, @env[USER_API_CLIENT_ID])
+      raise Discourse::InvalidAccess unless current_user
+      raise Discourse::InvalidAccess if current_user.suspended? || !current_user.active
+
+      limiter_min.performed!
+      limiter_day.performed!
+
+      @env[USER_API_KEY_ENV] = true
+    end
+
+    # keep this rule here as a safeguard
+    # under no conditions to suspended or inactive accounts get current_user
+    if current_user && (current_user.suspended? || !current_user.active)
+      current_user = nil
+    end
+
     @env[CURRENT_USER_KEY] = current_user
   end
 
   def log_on_user(user, session, cookies)
-  	# This is only currently used by the Impersonate function
-  	# This overwrites the auth token cookie with one stored in
-  	# the user record of the user we're trying to impersonate
-  	# (and that field will be created if it doesn't exist)
-  	# This will log out the user that was logged in (both here
-  	# and on all other services on this domain. Unfortunate, but
-  	# not unacceptable side effect)
-
-    # does the user record have an auth token string? Is it the right length?
-    unless user.auth_token && user.auth_token.length == 32
-      # no? Ok add one
-      user.auth_token = SecureRandom.hex(16)
-      # and update the record
-      user.save!
-    end
-
-    # create a session cookie that is the same as the user's auth_token
-    cookies.permanent[TOKEN_COOKIE] = { value: user.auth_token, httponly: true }
-
-
-    make_developer_admin(user)
-
-    # make the env current user the same one logged in
-    @env[CURRENT_USER_KEY] = user
+    # Currently this should never get called because we're using this in conjuction
+    # with the SSO.
+    return nil
   end
 
   def make_developer_admin(user)
@@ -174,61 +176,79 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
     end
   end
 
+  def enable_bootstrap_mode(user)
+    Jobs.enqueue(:enable_bootstrap_mode, user_id: user.id) if user.admin && user.last_seen_at.nil? && !SiteSetting.bootstrap_mode_enabled && user.is_singular_admin?
+  end
+
   def log_off_user(session, cookies)
-    if SiteSetting.log_out_strict && (user = current_user)
-      # Erase the saved token
-      user.auth_token = nil
-      user.save!
-      # Notify the pubsub server
-      MessageBus.publish "/logout", user.id, user_ids: [user.id]
+    user = current_user
+    if SiteSetting.log_out_strict && user
+      user.user_auth_tokens.destroy_all
+
+      if user.admin && defined?(Rack::MiniProfiler)
+        # clear the profiling cookie to keep stuff tidy
+        cookies.delete("__profilin")
+      end
+
+      user.logged_out
+    elsif user && @user_token
+      @user_token.destroy
     end
-
-    # TODO: Destroy the session in the redis server
-
-    # erase the matching cookie
-    cookies[TOKEN_COOKIE] = nil
+    
+    @@user_db.del "#{SESSION_NAMESPACE}:#{cookies[TOKEN_COOKIE]}"
+    cookies.delete(TOKEN_COOKIE, :domain => ".echocommunity.org")
   end
 
 
   # api has special rights return true if api was detected
   def is_api?
-    # this method modifies the @env[API_KEY_ENV] variable
     current_user
-    # it will be false if not an api call, true if it is.
-    @env[API_KEY_ENV]
+    !!(@env[API_KEY_ENV])
+  end
+
+  def is_user_api?
+    current_user
+    !!(@env[USER_API_KEY_ENV])
   end
 
   def has_auth_cookie?
-    # Just checks for a cookie of the expected length
     cookie = @request.cookies[TOKEN_COOKIE]
     !cookie.nil? && cookie.length == 32
   end
 
   def should_update_last_seen?
-    # Not if the message bus is the one calling, that would keep it around forever.
-    !(@request.path =~ /^\/message-bus\//)
+    if @request.xhr?
+      @env["HTTP_DISCOURSE_VISIBLE".freeze] == "true".freeze
+    else
+      true
+    end
   end
 
   protected
 
-  def lookup_api_user(api_key_value, request)
-    # Query the ApiKey model and get the associated user record as well
-    api_key = ApiKey.where(key: api_key_value).includes(:user).first
+  def lookup_user_api_user_and_update_key(user_api_key, client_id)
+    if api_key = UserApiKey.where(key: user_api_key, revoked_at: nil).includes(:user).first
+      unless api_key.allow?(@env)
+        raise Discourse::InvalidAccess
+      end
 
-    # only if something is in the query
-    if api_key
-      # get the username supplied with the request
+      if client_id.present? && client_id != api_key.client_id
+        api_key.update_columns(client_id: client_id)
+      end
+
+      api_key.user
+    end
+  end
+
+  def lookup_api_user(api_key_value, request)
+    if api_key = ApiKey.where(key: api_key_value).includes(:user).first
       api_username = request["api_username"]
 
-      # check that the api can be called from the address it was called from.
-      if api_key.allowed_ips.present? && !api_key.allowed_ips.any?{|ip| ip.include?(request.ip)}
-        Rails.logger.warn("Unauthorized API access: #{api_username} ip address: #{request.ip}")
+      if api_key.allowed_ips.present? && !api_key.allowed_ips.any? { |ip| ip.include?(request.ip) }
+        Rails.logger.warn("[Unauthorized API Access] username: #{api_username}, IP address: #{request.ip}")
         return nil
       end
 
-      # does this apikey have an associated user? no? what will you get as a response? False?
-      # Not exactly sure what it is returning, always a user object anyway... Have to read up
-      # on the api implementation.
       if api_key.user
         api_key.user if !api_username || (api_key.user.username_lower == api_username.downcase)
       elsif api_username
@@ -239,4 +259,4 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
 
 end
 
-# Discourse.current_user_provider = ECHOcommunityCurrentUserProvider
+Discourse.current_user_provider = ECHOcommunityCurrentUserProvider
