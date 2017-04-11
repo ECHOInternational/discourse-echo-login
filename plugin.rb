@@ -1,6 +1,6 @@
 # name: ECHO Login
 # about: Current User Modifications to use ECHOcommunity Cookies to log in users.
-# version: 1.8.0
+# version: 1.8.1
 # authors: Nate Flood for ECHO Inc
 
 require_dependency 'single_sign_on'
@@ -196,6 +196,7 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
     end
     
     @@user_db.del "#{SESSION_NAMESPACE}:#{cookies[TOKEN_COOKIE]}"
+    cookies.delete("remember_user_token", :domain => ".echocommunity.org")
     cookies.delete(TOKEN_COOKIE, :domain => ".echocommunity.org")
   end
 
