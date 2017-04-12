@@ -1,6 +1,6 @@
 # name: ECHO Login
 # about: Current User Modifications to use ECHOcommunity Cookies to log in users.
-# version: 1.8.1
+# version: 1.8.2
 # authors: Nate Flood for ECHO Inc
 
 require_dependency 'single_sign_on'
@@ -32,6 +32,9 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
   #modify to match the configuration for the rest of the site
   TOKEN_COOKIE ||= ENV['TOKEN_COOKIE']
   SESSION_NAMESPACE ||= ENV['SESSION_NAMESPACE']
+
+  IMPERSONATE_COOKIE ||= "_forum_admin_impersonate"
+  IMPERSONATE_LENGTH ||= 10800
 
   PATH_INFO ||= "PATH_INFO".freeze
   COOKIE_ATTEMPTS_PER_MIN ||= 10
@@ -157,13 +160,22 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
       current_user = nil
     end
 
+    if request.cookies[IMPERSONATE_COOKIE]
+      user_id = @@user_db.get "#{SESSION_NAMESPACE}_impersonate:#{request.cookies[IMPERSONATE_COOKIE]}"
+      impersonated_user = User.find(user_id) if user_id
+      
+      current_user = impersonated_user if impersonated_user
+    end
+
     @env[CURRENT_USER_KEY] = current_user
   end
 
+  # This is only used for impersonate.
   def log_on_user(user, session, cookies)
-    # Currently this should never get called because we're using this in conjuction
-    # with the SSO.
-    return nil
+    impersonate_key = SecureRandom.hex(12)
+    @@user_db.set("#{SESSION_NAMESPACE}_impersonate:#{impersonate_key}", user.id, {ex: IMPERSONATE_LENGTH})
+    cookies[IMPERSONATE_COOKIE] = impersonate_key
+    user
   end
 
   def make_developer_admin(user)
@@ -181,6 +193,13 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
   end
 
   def log_off_user(session, cookies)
+    # If we're impersonating, stop, and leave the user logged in.
+    if cookies[IMPERSONATE_COOKIE]
+      @@user_db.del "#{SESSION_NAMESPACE}_impersonate:#{cookies[IMPERSONATE_COOKIE]}"
+      cookies.delete(IMPERSONATE_COOKIE)
+      return true
+    end
+
     user = current_user
     if SiteSetting.log_out_strict && user
       user.user_auth_tokens.destroy_all
