@@ -171,7 +171,7 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
   end
 
   # This is only used for impersonate.
-  def log_on_user(user, session, cookies)
+  def log_on_user(user, session, cookies, opts = {})
     impersonate_key = SecureRandom.hex(12)
     @@user_db.set("#{SESSION_NAMESPACE}_impersonate:#{impersonate_key}", user.id, {ex: IMPERSONATE_LENGTH})
     cookies[IMPERSONATE_COOKIE] = impersonate_key
