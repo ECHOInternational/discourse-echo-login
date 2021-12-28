@@ -1,6 +1,6 @@
 # name: ECHO Login
 # about: Current User Modifications to use ECHOcommunity Cookies to log in users.
-# version: 1.8.3
+# version: 1.8.4
 # authors: Nate Flood for ECHO Inc
 
 require_dependency 'single_sign_on'
@@ -242,6 +242,10 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
     else
       true
     end
+  end
+
+  def secure_session
+    SecureSession.new(session["secure_session_id"] ||= SecureRandom.hex)
   end
 
   protected
