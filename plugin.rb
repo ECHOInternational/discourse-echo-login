@@ -1,6 +1,6 @@
 # name: ECHO Login
 # about: Current User Modifications to use ECHOcommunity Cookies to log in users.
-# version: 1.8.2
+# version: 1.8.3
 # authors: Nate Flood for ECHO Inc
 
 require_dependency 'single_sign_on'
