@@ -1,6 +1,6 @@
 # name: ECHO Login
 # about: Current User Modifications to use ECHOcommunity Cookies to log in users.
-# version: 2.0.0
+# version: 2.4.0
 # authors: Nate Flood for ECHO Inc
 
 require_dependency 'discourse_connect'
