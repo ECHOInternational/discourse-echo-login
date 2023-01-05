@@ -3,7 +3,7 @@
 # version: 2.4.0
 # authors: Nate Flood for ECHO Inc
 
-require_dependency 'discourse_connect'
+# require_dependency 'discourse_connect'
 require_dependency "auth/current_user_provider"
 require_dependency "rate_limiter"
 require_dependency "app/models/user_auth_token"
