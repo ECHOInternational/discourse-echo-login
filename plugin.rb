@@ -6,8 +6,8 @@
 # require_dependency 'discourse_connect'
 require_dependency "auth/current_user_provider"
 require_dependency "rate_limiter"
-require_dependency "app/models/user_auth_token"
-require_dependency "app/models/discourse_connect"
+# require_dependency "app/models/user_auth_token"
+# require_dependency "app/models/discourse_connect"
 
 # This section monkey patches the Single Sign on Provider to provide the current url instead
 # of doing all of the sso functions we don't really need since we're using cookies to set
