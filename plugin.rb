@@ -97,7 +97,7 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
     end
 
     if apex_user && apex_user["uid"]
-      sso = DiscourseSingleSignOn.new(secure_session: secure_session)
+      sso = DiscourseConnect.new(secure_session: secure_session)
       sso.email = apex_user["email_address"]
       sso.name = apex_user["nickname"]
       sso.username = apex_user["nickname"]
