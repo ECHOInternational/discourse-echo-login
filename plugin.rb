@@ -1,21 +1,21 @@
 # name: ECHO Login
 # about: Current User Modifications to use ECHOcommunity Cookies to log in users.
-# version: 1.8.5
+# version: 2.0.0
 # authors: Nate Flood for ECHO Inc
 
-require_dependency 'single_sign_on'
+require_dependency 'discourse_connect'
 require_dependency "auth/current_user_provider"
 require_dependency "rate_limiter"
 require_dependency "app/models/user_auth_token"
-require_dependency "app/models/discourse_single_sign_on"
+require_dependency "app/models/discourse_connect"
 
 # This section monkey patches the Single Sign on Provider to provide the current url instead
 # of doing all of the sso functions we don't really need since we're using cookies to set
 # the current user.
 after_initialize do 
-  SingleSignOn.class_eval do
+  DiscourseConnect.class_eval do
     def to_url(base_url=nil)
-      "#{SiteSetting.sso_url}/?return_path=#{(ERB::Util.url_encode(Discourse.base_url + return_path))}"
+      "#{SiteSetting.discourse_connect_url}/?return_path=#{(ERB::Util.url_encode(Discourse.base_url + return_path))}"
     end
   end
 end
