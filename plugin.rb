@@ -78,7 +78,10 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
 
     if auth_token && current_user.nil?
       # get user's details from the redis store
-      apex_session = @@user_db.get "#{SESSION_NAMESPACE}:#{auth_token}"
+      # old way
+      # apex_session = @@user_db.get "#{SESSION_NAMESPACE}:#{auth_token}"
+      private_id = OpenSSL::Digest::SHA256.hexdigest(auth_token)
+      apex_session = @@user_db.get("#{SESSION_NAMESPACE}:#{private_id}") || @@user_db.get("#{SESSION_NAMESPACE}:#{auth_token}")
     end
 
     apex_user = nil
