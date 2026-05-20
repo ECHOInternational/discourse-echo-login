@@ -5,6 +5,9 @@
  - Reads ECHOcommunity shared session cookie and performs user authentication from redis
 
 ## Changelog:
+**2.4.0 - 2.5.0**
+FIX: Changed session handling to match Rails 6.
+
 **2.3.0 - 2.4.0**
 FIX: Changed Single Sign On to Discourse Connect for Discourse v3
 

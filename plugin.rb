@@ -1,6 +1,6 @@
 # name: ECHO Login
 # about: Current User Modifications to use ECHOcommunity Cookies to log in users.
-# version: 2.4.0
+# version: 2.5.0
 # authors: Nate Flood for ECHO Inc
 
 # require_dependency 'discourse_connect'
@@ -78,7 +78,8 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
 
     if auth_token && current_user.nil?
       # get user's details from the redis store
-      apex_session = @@user_db.get "#{SESSION_NAMESPACE}:#{auth_token}"
+      private_id = OpenSSL::Digest::SHA256.hexdigest(auth_token)
+      apex_session = @@user_db.get("#{SESSION_NAMESPACE}:#{private_id}") || @@user_db.get("#{SESSION_NAMESPACE}:#{auth_token}")
     end
 
     apex_user = nil
@@ -214,7 +215,9 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
       @user_token.destroy
     end
     
-    @@user_db.del "#{SESSION_NAMESPACE}:#{cookies[TOKEN_COOKIE]}"
+    private_id = OpenSSL::Digest::SHA256.hexdigest(cookies[TOKEN_COOKIE])
+    @@user_db.del("#{SESSION_NAMESPACE}:#{private_id}")
+    @@user_db.del("#{SESSION_NAMESPACE}:#{cookies[TOKEN_COOKIE]}")  # clean up any old-format keys
     cookies.delete("remember_user_token", :domain => ".echocommunity.org")
     cookies.delete(TOKEN_COOKIE, :domain => ".echocommunity.org")
   end
