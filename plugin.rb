@@ -1,11 +1,13 @@
 # name: ECHO Login
 # about: Current User Modifications to use ECHOcommunity Cookies to log in users.
-# version: 2.5.1
+# version: 2.5.2
 # authors: Nate Flood for ECHO Inc
 
 # require_dependency 'discourse_connect'
-require_dependency "auth/current_user_provider"
-require_dependency "rate_limiter"
+# Zeitwerk autoloads these on first constant reference; explicit require_dependency
+# is unnecessary on Rails 7+/Discourse and is dropped for the v2026.1 upgrade.
+# require_dependency "auth/current_user_provider"
+# require_dependency "rate_limiter"
 # require_dependency "app/models/user_auth_token"
 # require_dependency "app/models/discourse_connect"
 
@@ -98,7 +100,15 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
     end
 
     if apex_user && apex_user["uid"]
-      sso = DiscourseConnect.new(secure_session: secure_session)
+      # Discourse renamed the DiscourseConnect constructor kwarg secure_session: -> server_session:
+      # (present from ~v2026.1 / Rails 8). The rescue keeps this branch loadable against older
+      # Discourse during any incremental rebuild/test.
+      sso =
+        begin
+          DiscourseConnect.new(server_session: secure_session)
+        rescue ArgumentError
+          DiscourseConnect.new(secure_session: secure_session)
+        end
       sso.email = apex_user["email_address"]
       sso.name = apex_user["nickname"]
       sso.username = apex_user["nickname"]
