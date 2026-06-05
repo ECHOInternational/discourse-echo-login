@@ -1,6 +1,6 @@
 # name: ECHO Login
 # about: Current User Modifications to use ECHOcommunity Cookies to log in users.
-# version: 2.5.2
+# version: 2.5.3
 # authors: Nate Flood for ECHO Inc
 
 # require_dependency 'discourse_connect'
@@ -43,10 +43,19 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
 
   USER_DB_REDIS_HOST ||= ENV['USER_DB_REDIS_HOST']
   USER_DB_REDIS_PORT ||= ENV['USER_DB_REDIS_PORT']
+  # Optional Redis logical DB index for the shared session store (default 0 / prod).
+  # Lets a staging instance read sessions from a different DB on the same cluster.
+  USER_DB_REDIS_DB ||= ENV['USER_DB_REDIS_DB']
+  # Staging safety guard: when 'true', NEVER mutate the shared session store
+  # (logout/impersonation writes become no-ops) so a staging forum can read the
+  # production session store read-only without affecting real users. Default off.
+  USER_DB_REDIS_READONLY ||= ENV['USER_DB_REDIS_READONLY'] == 'true'
 
 
   # Our Modification
-  @@user_db = Redis.new(:host => USER_DB_REDIS_HOST, :port =>USER_DB_REDIS_PORT)
+  redis_opts = { :host => USER_DB_REDIS_HOST, :port => USER_DB_REDIS_PORT }
+  redis_opts[:db] = USER_DB_REDIS_DB.to_i if USER_DB_REDIS_DB
+  @@user_db = Redis.new(redis_opts)
 
   def initialize(env)
     @env = env
@@ -184,7 +193,7 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
   # This is only used for impersonate.
   def log_on_user(user, session, cookies, opts = {})
     impersonate_key = SecureRandom.hex(12)
-    @@user_db.set("#{SESSION_NAMESPACE}_impersonate:#{impersonate_key}", user.id, {ex: IMPERSONATE_LENGTH})
+    @@user_db.set("#{SESSION_NAMESPACE}_impersonate:#{impersonate_key}", user.id, {ex: IMPERSONATE_LENGTH}) unless USER_DB_REDIS_READONLY
     cookies[IMPERSONATE_COOKIE] = impersonate_key
     user
   end
@@ -206,7 +215,7 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
   def log_off_user(session, cookies)
     # If we're impersonating, stop, and leave the user logged in.
     if cookies[IMPERSONATE_COOKIE]
-      @@user_db.del "#{SESSION_NAMESPACE}_impersonate:#{cookies[IMPERSONATE_COOKIE]}"
+      @@user_db.del "#{SESSION_NAMESPACE}_impersonate:#{cookies[IMPERSONATE_COOKIE]}" unless USER_DB_REDIS_READONLY
       cookies.delete(IMPERSONATE_COOKIE)
       return true
     end
@@ -225,9 +234,13 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
       @user_token.destroy
     end
     
-    private_id = OpenSSL::Digest::SHA256.hexdigest(cookies[TOKEN_COOKIE])
-    @@user_db.del("#{SESSION_NAMESPACE}:#{private_id}")
-    @@user_db.del("#{SESSION_NAMESPACE}:#{cookies[TOKEN_COOKIE]}")  # clean up any old-format keys
+    unless USER_DB_REDIS_READONLY
+      private_id = OpenSSL::Digest::SHA256.hexdigest(cookies[TOKEN_COOKIE])
+      @@user_db.del("#{SESSION_NAMESPACE}:#{private_id}")
+      @@user_db.del("#{SESSION_NAMESPACE}:#{cookies[TOKEN_COOKIE]}")  # clean up any old-format keys
+    end
+    # Client-side only (clears the tester's own browser cookie); left enabled even in
+    # read-only mode since it does not mutate the shared session store.
     cookies.delete("remember_user_token", :domain => ".echocommunity.org")
     cookies.delete(TOKEN_COOKIE, :domain => ".echocommunity.org")
   end
