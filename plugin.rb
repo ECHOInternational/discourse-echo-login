@@ -1,6 +1,6 @@
 # name: ECHO Login
 # about: Current User Modifications to use ECHOcommunity Cookies to log in users.
-# version: 2.5.4
+# version: 2.5.5
 # authors: Nate Flood for ECHO Inc
 
 # require_dependency 'discourse_connect'
@@ -274,8 +274,15 @@ class ECHOcommunityCurrentUserProvider < Auth::CurrentUserProvider
   end
 
   def secure_session
-    SecureSession.new(SecureRandom.hex)
-    # SecureSession.new(session["secure_session_id"] ||= SecureRandom.hex)
+    # Discourse renamed SecureSession -> ServerSession (same constructor) alongside the
+    # DiscourseConnect secure_session: -> server_session: kwarg rename (~v2026.1). Prefer the
+    # new class, fall back to the old so this branch still works on older Discourse.
+    begin
+      ServerSession.new(SecureRandom.hex)
+    rescue NameError
+      SecureSession.new(SecureRandom.hex)
+    end
+    # ServerSession.new(session["secure_session_id"] ||= SecureRandom.hex)
   end
 
   protected
