@@ -1,13 +1,16 @@
 # name: ECHO Login
 # about: Current User Modifications to use ECHOcommunity Cookies to log in users.
-# version: 2.5.3
+# version: 2.5.4
 # authors: Nate Flood for ECHO Inc
 
 # require_dependency 'discourse_connect'
-# Zeitwerk autoloads these on first constant reference; explicit require_dependency
-# is unnecessary on Rails 7+/Discourse and is dropped for the v2026.1 upgrade.
-# require_dependency "auth/current_user_provider"
-# require_dependency "rate_limiter"
+# Auth::CurrentUserProvider is subclassed at load time below. Plugin activation runs
+# before Zeitwerk eager-loading, so the constant is NOT yet autoloadable then -- it
+# must be required explicitly (dropping this raised "uninitialized constant
+# Auth::CurrentUserProvider" on v2026.1). RateLimiter is only used at request time but
+# kept here to match.
+require_dependency "auth/current_user_provider"
+require_dependency "rate_limiter"
 # require_dependency "app/models/user_auth_token"
 # require_dependency "app/models/discourse_connect"
 
